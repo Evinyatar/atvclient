@@ -37,7 +37,6 @@
 
 #define BUTTON_TIMEOUT 150
 #define HOLD_TIMEOUT   500
-#define REPEAT_TIMEOUT 500
 
 #define EVENT_UP 1
 #define EVENT_DOWN 2
@@ -47,6 +46,8 @@
 #define EVENT_MENU 6
 #define EVENT_HOLD_PLAY 7
 #define EVENT_HOLD_MENU 8
+
+#define EVENT_RELEASE 0x10
 
 /* from libusb usbi.h */
 struct usb_dev_handle {
@@ -74,10 +75,11 @@ struct ir_command {
 static CAddress my_addr;
 static int sockfd;
 
-static CPacketBUTTON* button_map[9];
+static CPacketBUTTON* button_map[0xff];
 
 static CPacketNOTIFICATION remote_paired("Remote paired", "You can now only control XBMC using the control you're holding. To unpair, hold down menu and rewind for 6 seconds.", NULL, NULL);
 static CPacketNOTIFICATION remote_unpaired("Remote unpaired", "You can now control XBMC with any Apple remote.", NULL, NULL);
+static CPacketNOTIFICATION remote_pair_failed("Remote already paired", "This AppleTV was paired to another remote. To unpair, hold down menu and rewind for 6 seconds.", NULL, NULL);
 
 const char* remoteIdFile = "/etc/atvremoteid";
 static int pairedRemoteId = 0; 
@@ -369,14 +371,7 @@ void send_button(int button) {
     case EVENT_HOLD_PLAY: printf("Play/pause hold\n"); break;
   }
   
-  printf("%d %x\n", button, button_map[button]);
-  
-  CAddress addr("localhost");       
-  
-  bool sent = button_map[button] -> Send(sockfd, addr);
-  if(!sent) {
-    printf("Error sending button event!\n");
-  }
+  button_map[button] -> Send(sockfd, my_addr);
 }
 
 void handle_button(struct ir_command command) {
@@ -393,23 +388,21 @@ void handle_button(struct ir_command command) {
   
   if(previousButton != command.eventId) {
     buttonStart = millis();
-  } else {
-    if(command.flags == 0x26 && millis() - buttonStart < REPEAT_TIMEOUT) return;
   }
 
   switch(command.eventId) {
     case 0x0a:
     case 0x0b:
-      send_button(EVENT_UP); break;
+      if(command.eventId != previousButton) send_button(EVENT_UP); break;
     case 0x0c:
     case 0x0d:
-      send_button(EVENT_DOWN); break;
+      if(command.eventId != previousButton) send_button(EVENT_DOWN); break;
     case 0x09:
     case 0x08:
-      send_button(EVENT_LEFT); break;
+      if(command.eventId != previousButton) send_button(EVENT_LEFT); break;
     case 0x06:
     case 0x07:
-      send_button(EVENT_RIGHT); break;
+      if(command.eventId != previousButton) send_button(EVENT_RIGHT); break;
     case 0x03: case 0x02: case 0x05: case 0x04:
       // menu and pause need special treatment
       if(previousButton != command.eventId) {
@@ -424,7 +417,22 @@ void handle_button(struct ir_command command) {
         }
       }
       break;
-    case 0x00: break; //timeout
+    case 0x00:
+      switch(previousButton) {
+        case 0x0a:
+        case 0x0b:
+          send_button(EVENT_UP | EVENT_RELEASE); break;
+        case 0x0c:
+        case 0x0d:
+          send_button(EVENT_DOWN | EVENT_RELEASE); break;
+        case 0x09:
+        case 0x08:
+          send_button(EVENT_LEFT | EVENT_RELEASE); break;
+        case 0x06:
+        case 0x07:
+          send_button(EVENT_RIGHT | EVENT_RELEASE); break; 
+      }
+      break; //timeout
     default:
       printf("unknown\n");
   }
@@ -457,15 +465,18 @@ char event_map[] = { 0x00, 0x00, 0x03, 0x02, 0x04, 0x04 };
 
 void handle_special(struct ir_command command) {
   static unsigned char previousEventId;
-  static long previousEventTime;
-    
-  if(command.eventId != previousEventId || millis() - previousEventTime > REPEAT_TIMEOUT) {
+  if(command.eventId != previousEventId) {
     switch(command.eventId) {
       case 0x02: case 0x03: // pair!
-        printf("Pairing ID: %d\n", command.address);
-        writePairedAddressId(command.address);
-        pairedRemoteId = command.address;
-        remote_paired.Send(sockfd, my_addr);
+        if(pairedRemoteId != 0) {
+          printf("Already paired: %d\n", command.address);
+          remote_pair_failed.Send(sockfd, my_addr);
+        } else {
+          printf("Pairing ID: %d\n", command.address);
+          writePairedAddressId(command.address);
+          pairedRemoteId = command.address;
+          remote_paired.Send(sockfd, my_addr);
+        }
         break;
       case 0x04: case 0x05: // unpair!
         printf("Unpairing ID: %d\n", command.address);
@@ -475,8 +486,7 @@ void handle_special(struct ir_command command) {
         break;  
     }
     previousEventId = command.eventId;
-  }      
-  previousEventTime = millis();
+  }
   
 }
 
@@ -497,14 +507,18 @@ int main(int argc, char **argv) {
 
   printf("Preparing button map...\n");
  
-  button_map[EVENT_UP]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_DOWN]        = new CPacketBUTTON(EVENT_DOWN,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_LEFT]        = new CPacketBUTTON(EVENT_LEFT,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_RIGHT]       = new CPacketBUTTON(EVENT_RIGHT,      "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_UP]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_DOWN);
+  button_map[EVENT_DOWN]        = new CPacketBUTTON(EVENT_DOWN,       "JS0:AppleRemote", BTN_DOWN);
+  button_map[EVENT_LEFT]        = new CPacketBUTTON(EVENT_LEFT,       "JS0:AppleRemote", BTN_DOWN);
+  button_map[EVENT_RIGHT]       = new CPacketBUTTON(EVENT_RIGHT,      "JS0:AppleRemote", BTN_DOWN);
   button_map[EVENT_PLAY]        = new CPacketBUTTON(EVENT_PLAY,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_MENU]        = new CPacketBUTTON(EVENT_MENU,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_PLAY]   = new CPacketBUTTON(EVENT_HOLD_PLAY,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_MENU]   = new CPacketBUTTON(EVENT_HOLD_MENU,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_UP | EVENT_RELEASE    ]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_DOWN | EVENT_RELEASE  ]        = new CPacketBUTTON(EVENT_DOWN,       "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_LEFT | EVENT_RELEASE  ]        = new CPacketBUTTON(EVENT_LEFT,       "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_RIGHT | EVENT_RELEASE ]       = new CPacketBUTTON(EVENT_RIGHT,      "JS0:AppleRemote", BTN_UP);
   
   pairedRemoteId = readPairedAddressId();
   
@@ -542,6 +556,7 @@ int main(int argc, char **argv) {
       // timeout, reset led                        
       set_led(LEDMODE_WHITE);
       handle_button(timeoutCommand);
+      handle_special(timeoutCommand);
     } else {
       // something else
       printf("Got nuffing: %d\n", result);
