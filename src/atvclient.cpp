@@ -76,8 +76,11 @@ static int sockfd;
 
 static CPacketBUTTON* button_map[9];
 
-static CPacketNOTIFICATION remote_paired("Remote paired", "Your remote is now paired.", NULL, NULL);
-static CPacketNOTIFICATION remote_unpaired("Remote unpaired", "Your remote is now unpaired.", NULL, NULL); 
+static CPacketNOTIFICATION remote_paired("Remote paired", "You can now only control XBMC using the control you're holding. To unpair, hold down menu and rewind for 6 seconds.", NULL, NULL);
+static CPacketNOTIFICATION remote_unpaired("Remote unpaired", "You can now control XBMC with any Apple remote.", NULL, NULL);
+
+const char* remoteIdFile = "/etc/atvremoteid";
+static int pairedRemoteId = 0; 
 
 /* figure out kernel name corresponding to usb device */
 static int usb_make_kernel_name(usb_dev_handle *dev, int interface,
@@ -335,6 +338,16 @@ void dumphex(unsigned char* buf, int size) {
     printf("%02x ", buf[i]);
   }
   printf("\n");
+  
+  /*
+  for(i=0; i < size; i++) {
+    int j = 0;
+    for(j=0; j < 8; j++) {
+      if(buf[i] << j & 0x80) printf("1"); else printf("0");  
+    }
+    printf(" ");
+  }
+  printf("\n"); */
 
 }
 
@@ -418,23 +431,48 @@ void handle_button(struct ir_command command) {
   previousButton = command.eventId;
 }
 
+int readPairedAddressId() {
+  FILE *fp = fopen(remoteIdFile, "r");
+  if(fp != NULL) {
+    int address;
+    fscanf(fp, "%d", &address);
+    fclose(fp);   
+    return address;
+  } else {
+    return 0;
+  }  
+}
+
+void writePairedAddressId(int address) {
+  FILE *fp = fopen(remoteIdFile, "w");
+  if(fp != NULL) {
+    fprintf(fp, "%d\n", address);
+    fclose(fp);   
+  } else {
+    printf("Could not open file `%s' for writing.\n", remoteIdFile); 
+  }  
+}
+
+char event_map[] = { 0x00, 0x00, 0x03, 0x02, 0x04, 0x04 };
+
 void handle_special(struct ir_command command) {
   static unsigned char previousEventId;
   static long previousEventTime;
-  
+    
   if(command.eventId != previousEventId || millis() - previousEventTime > REPEAT_TIMEOUT) {
     switch(command.eventId) {
-      case 0x02: // pair!
+      case 0x02: case 0x03: // pair!
         printf("Pairing ID: %d\n", command.address);
+        writePairedAddressId(command.address);
+        pairedRemoteId = command.address;
         remote_paired.Send(sockfd, my_addr);
         break;
-      case 0x04: // unpair!
+      case 0x04: case 0x05: // unpair!
         printf("Unpairing ID: %d\n", command.address);
+        writePairedAddressId(0);
+        pairedRemoteId = 0;
         remote_unpaired.Send(sockfd, my_addr);
         break;  
-      case 0x03: // update!
-        printf("Updating Remote ID: %d\n", command.address);
-        break;
     }
     previousEventId = command.eventId;
   }      
@@ -443,7 +481,6 @@ void handle_special(struct ir_command command) {
 }
 
 int main(int argc, char **argv) {
-
   struct ir_command command;
   struct ir_command timeoutCommand;
   
@@ -469,27 +506,36 @@ int main(int argc, char **argv) {
   button_map[EVENT_HOLD_PLAY]   = new CPacketBUTTON(EVENT_HOLD_PLAY,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_MENU]   = new CPacketBUTTON(EVENT_HOLD_MENU,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   
+  pairedRemoteId = readPairedAddressId();
+  
+  printf("Paired to: %x\n", pairedRemoteId);
+  
   printf("Ready!\n");
   
   set_led(LEDMODE_WHITE);
-  //usb_clear_halt(get_ir(), 0x82);
   
-  char isRepeat;           
-                          
   while(1){
     int result = usb_interrupt_read(get_ir(), 0x82, (char*) &command, sizeof(command), BUTTON_TIMEOUT);  
     
     if(result > 0) {
       // we have an IR code!
-      set_led(LEDMODE_OFF);
       unsigned long start = millis();
       //printf("%10d: ", millis());
       dumphex((unsigned char*) &command, result);
-       
+      
       switch(command.event) {
-        case 0xee: handle_button(command); break;
-        case 0xe0: handle_special(command); break;
-        default: printf("Unknown event %x\n", command.event);
+        case 0xee: 
+          if(pairedRemoteId == 0 || command.address == pairedRemoteId) {
+            set_led(LEDMODE_OFF);
+            handle_button(command);
+          }
+          break;
+        case 0xe0:
+          set_led(LEDMODE_OFF);
+          handle_special(command);
+          break;
+        default:
+          printf("Unknown event %x\n", command.event);
       }
       
     } else if(result == -110) {
