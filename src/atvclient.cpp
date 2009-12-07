@@ -358,9 +358,12 @@ void send_button(int button) {
   
   printf("%d %x\n", button, button_map[button]);
   
-  /* CPacketBUTTON btn(button, "JS0:AppleRemote", BTN_DOWN);
-  btn.Send(sockfd, my_addr); */
-  button_map[button] -> Send(sockfd, my_addr);
+  CAddress addr("localhost");       
+  
+  bool sent = button_map[button] -> Send(sockfd, addr);
+  if(!sent) {
+    printf("Error sending button event!\n");
+  }
 }
 
 void handle_button(struct ir_command command) {
@@ -455,8 +458,6 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  my_addr.Bind(sockfd);
- 
   printf("Preparing button map...\n");
  
   button_map[EVENT_UP]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
