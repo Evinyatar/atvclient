@@ -49,6 +49,11 @@
 
 #define EVENT_RELEASE 0x10
 
+int idle_mode = LEDMODE_WHITE;
+int button_mode = LEDMODE_OFF;
+int special_mode = LEDMODE_AMBER;
+int hold_mode = LEDMODE_AMBER;
+
 /* from libusb usbi.h */
 struct usb_dev_handle {
 	int fd;
@@ -409,6 +414,7 @@ void handle_button(struct ir_command command) {
         holdButtonSent = 0;
       } else {
         if(millis() - buttonStart > HOLD_TIMEOUT && !holdButtonSent) {
+          set_led(hold_mode);
           switch(command.eventId) {
             case 0x03: case 0x02: send_button(EVENT_HOLD_MENU); break;
             case 0x05: case 0x04: send_button(EVENT_HOLD_PLAY); break;
@@ -490,9 +496,68 @@ void handle_special(struct ir_command command) {
   
 }
 
+void usage(int argc, char **argv) {
+  if (argc >=1) {
+    printf("Usage: %s [-i mode] [-s mode] [-H mode] [-b mode] [-B] [-h]\n", argv[0]);
+    printf("  Options:\n");
+    printf("      -i\tChange the LED mode for when the receiver is idle.\n");
+    printf("      -b\tChange the LED mode for when the receiver is receiving a button press.\n");
+    printf("      -H\tChange the LED mode for when the hold event is triggered.\n");
+    printf("      -s\tChange the LED mode for when a special event is received.\n");
+    printf("      -B\tSwitch LED to low brightness\n");
+    printf("      -h\tShow this help screen.\n\n");
+    printf("Supported LED modes:\n");
+    printf("  0: off\n");
+    printf("  1: amber\n");
+    printf("  2: blink amber\n");
+    printf("  3: white\n");
+    printf("  4:blink white\n");
+    printf("  5: blink both\n");
+    printf("\n");
+  }
+}
+
 int main(int argc, char **argv) {
   struct ir_command command;
   struct ir_command timeoutCommand;
+ 
+  int c;
+  
+  int led_brightness = 1;
+ 
+  while ((c = getopt (argc, argv, "Bi:b:s:H:h")) != -1)
+  switch (c) {
+    case 'i':
+      idle_mode = atol(optarg); break;
+    case 'b':
+      button_mode = atol(optarg); break;
+    case 's':
+      special_mode = atol(optarg); break;
+    case 'H':
+      hold_mode = atol(optarg); break;
+    case 'h':
+      usage(argc,argv); exit(0); break;
+    case 'B':
+      led_brightness = 0; break;
+    case '?':
+      switch(optopt) {
+        case 'i': case 'b': case 's': case 'H':
+             fprintf (stderr, "Option -%c requires an argument.\n", optopt);
+             break;
+        default:
+             if (isprint (optopt))
+               fprintf (stderr, "Unknown option `-%c'.\n", optopt);
+             else
+               fprintf (stderr,
+                        "Unknown option character `\\x%x'.\n",
+                        optopt);
+      }
+      return 1;
+    default:
+      abort();
+  }
+  
+  set_led_brightness(led_brightness);
   
   memset(&timeoutCommand, 0, sizeof(timeoutCommand));
   
@@ -528,9 +593,12 @@ int main(int argc, char **argv) {
   
   set_led(LEDMODE_WHITE);
   
-  while(1){
-    int result = usb_interrupt_read(get_ir(), 0x82, (char*) &command, sizeof(command), BUTTON_TIMEOUT);  
+  int keydown = 0;
+  
+  set_led(idle_mode);
     
+  while(1){
+    int result = usb_interrupt_read(get_ir(), 0x82, (char*) &command, sizeof(command), keydown ? BUTTON_TIMEOUT : 0);  
     if(result > 0) {
       // we have an IR code!
       unsigned long start = millis();
@@ -540,25 +608,28 @@ int main(int argc, char **argv) {
       switch(command.event) {
         case 0xee: 
           if(pairedRemoteId == 0 || command.address == pairedRemoteId) {
-            set_led(LEDMODE_OFF);
+            set_led(button_mode);
             handle_button(command);
           }
           break;
         case 0xe0:
-          set_led(LEDMODE_OFF);
+          set_led(special_mode);
           handle_special(command);
           break;
         default:
           printf("Unknown event %x\n", command.event);
       }
+      keydown = 1;
       
     } else if(result == -110) {
-      // timeout, reset led                        
-      set_led(LEDMODE_WHITE);
+      // timeout, reset led
+      keydown = 0;                        
+      set_led(idle_mode);
       handle_button(timeoutCommand);
       handle_special(timeoutCommand);
     } else {
       // something else
+      keydown = 0;
       printf("Got nuffing: %d\n", result);
     }
   }
