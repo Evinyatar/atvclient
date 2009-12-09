@@ -511,7 +511,7 @@ void usage(int argc, char **argv) {
     printf("  1: amber\n");
     printf("  2: blink amber\n");
     printf("  3: white\n");
-    printf("  4:blink white\n");
+    printf("  4: blink white\n");
     printf("  5: blink both\n");
     printf("\n");
   }

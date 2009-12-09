@@ -7,9 +7,17 @@ SCRIPTNAME=/etc/init.d/$NAME
 atvclient=/usr/local/sbin/atvclient
 pidfile=/tmp/atvclient.pid
 
+defaults="/etc/default/atvclient"
+
+ARGS=""
+
+if [ -f "$defaults" ]; then
+	. "$defaults"
+fi
+
 do_start()
 {
-	start-stop-daemon --start --pidfile "$pidfile" --exec "$atvclient" -b -m
+	start-stop-daemon -b -m --pidfile "$pidfile" --exec "$atvclient" --start -- $OPTIONS
 	return 0
 }
 
