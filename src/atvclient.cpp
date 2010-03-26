@@ -49,6 +49,16 @@
 
 #define EVENT_RELEASE 0x10
 
+#define EVENT_EXTRA_PLAY          70
+#define EVENT_EXTRA_PAUSE         71
+#define EVENT_EXTRA_STOP          72
+#define EVENT_EXTRA_REPLAY        73
+#define EVENT_EXTRA_SKIP          74
+#define EVENT_EXTRA_REWIND        75      
+#define EVENT_EXTRA_FORWARD       76
+#define EVENT_EXTRA_PAGEUP        77
+#define EVENT_EXTRA_PAGEDOWN      78
+
 int idle_mode = LEDMODE_WHITE;
 int button_mode = LEDMODE_OFF;
 int special_mode = LEDMODE_AMBER;
@@ -408,6 +418,18 @@ void handle_button(struct ir_command command) {
     case 0x06:
     case 0x07:
       if(command.eventId != previousButton) send_button(EVENT_RIGHT); break;
+      
+    // extra buttons mapped by Harmony remotes
+    case 0x16: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PLAY         ); break;
+    case 0x32: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAUSE        ); break;
+    case 0x31: if(command.eventId != previousButton) send_button( EVENT_EXTRA_STOP         ); break;
+    case 0x25: if(command.eventId != previousButton) send_button( EVENT_EXTRA_REPLAY       ); break;
+    case 0x23: if(command.eventId != previousButton) send_button( EVENT_EXTRA_SKIP         ); break;
+    case 0x1c: if(command.eventId != previousButton) send_button( EVENT_EXTRA_REWIND       ); break;
+    case 0x1a: if(command.eventId != previousButton) send_button( EVENT_EXTRA_FORWARD      ); break;
+    case 0x2f: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAGEUP       ); break;
+    case 0x26: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAGEDOWN     ); break;
+      
     case 0x03: case 0x02: case 0x05: case 0x04:
       // menu and pause need special treatment
       if(previousButton != command.eventId) {
@@ -580,10 +602,20 @@ int main(int argc, char **argv) {
   button_map[EVENT_MENU]        = new CPacketBUTTON(EVENT_MENU,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_PLAY]   = new CPacketBUTTON(EVENT_HOLD_PLAY,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_MENU]   = new CPacketBUTTON(EVENT_HOLD_MENU,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_UP | EVENT_RELEASE    ]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_DOWN | EVENT_RELEASE  ]        = new CPacketBUTTON(EVENT_DOWN,       "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_LEFT | EVENT_RELEASE  ]        = new CPacketBUTTON(EVENT_LEFT,       "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_RIGHT | EVENT_RELEASE ]       = new CPacketBUTTON(EVENT_RIGHT,      "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_UP | EVENT_RELEASE    ] = new CPacketBUTTON(EVENT_UP,      "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_DOWN | EVENT_RELEASE  ] = new CPacketBUTTON(EVENT_DOWN,    "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_LEFT | EVENT_RELEASE  ] = new CPacketBUTTON(EVENT_LEFT,    "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_RIGHT | EVENT_RELEASE ] = new CPacketBUTTON(EVENT_RIGHT,   "JS0:AppleRemote", BTN_UP);
+  
+  button_map[EVENT_EXTRA_PLAY]          = new CPacketBUTTON(EVENT_EXTRA_PLAY,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAUSE]         = new CPacketBUTTON(EVENT_EXTRA_PAUSE,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_STOP]          = new CPacketBUTTON(EVENT_EXTRA_STOP,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_REPLAY]        = new CPacketBUTTON(EVENT_EXTRA_REPLAY,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_SKIP]          = new CPacketBUTTON(EVENT_EXTRA_SKIP,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_REWIND]        = new CPacketBUTTON(EVENT_EXTRA_REWIND,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_FORWARD]       = new CPacketBUTTON(EVENT_EXTRA_FORWARD,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAGEUP]        = new CPacketBUTTON(EVENT_EXTRA_PAGEUP,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAGEDOWN]      = new CPacketBUTTON(EVENT_EXTRA_PAGEDOWN,      "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   
   pairedRemoteId = readPairedAddressId();
   
@@ -606,7 +638,8 @@ int main(int argc, char **argv) {
       dumphex((unsigned char*) &command, result);
       
       switch(command.event) {
-        case 0xee: 
+        case 0xee:
+        case 0xe5: 
           if(pairedRemoteId == 0 || command.address == pairedRemoteId) {
             set_led(button_mode);
             handle_button(command);
