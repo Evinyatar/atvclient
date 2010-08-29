@@ -47,7 +47,7 @@
 #define EVENT_HOLD_PLAY 7
 #define EVENT_HOLD_MENU 8
 
-#define EVENT_RELEASE 0x10
+#define EVENT_RELEASE 0x80
 
 #define EVENT_EXTRA_PLAY          70
 #define EVENT_EXTRA_PAUSE         71
@@ -59,6 +59,70 @@
 #define EVENT_EXTRA_PAGEUP        77
 #define EVENT_EXTRA_PAGEDOWN      78
 
+#define EVENT_HARMONY_UP           1
+#define EVENT_HARMONY_DOWN         2
+#define EVENT_HARMONY_LEFT         3
+#define EVENT_HARMONY_RIGHT        4
+#define EVENT_HARMONY_OK           5
+#define EVENT_HARMONY_MENU         6
+#define EVENT_HARMONY_HOLD_OK      7
+#define EVENT_HARMONY_HOLD_MENU    8
+#define EVENT_HARMONY_STOP        15
+#define EVENT_HARMONY_PLAY        16
+#define EVENT_HARMONY_REPLAY      91
+#define EVENT_HARMONY_SKIP        92
+#define EVENT_HARMONY_RECORD      52
+#define EVENT_HARMONY_REWIND      41
+#define EVENT_HARMONY_FORWARD     42
+#define EVENT_HARMONY_PAUSE       26
+#define EVENT_HARMONY_PREV        32
+#define EVENT_HARMONY_GUIDE       65
+#define EVENT_HARMONY_INFO        31
+#define EVENT_HARMONY_EXIT        51
+#define EVENT_HARMONY_VOLUP       21
+#define EVENT_HARMONY_VOLDOWN     22
+#define EVENT_HARMONY_1           11
+#define EVENT_HARMONY_2           12
+#define EVENT_HARMONY_3           13
+#define EVENT_HARMONY_4           14
+#define EVENT_HARMONY_5           23
+#define EVENT_HARMONY_6           24
+#define EVENT_HARMONY_7           33
+#define EVENT_HARMONY_8           34
+#define EVENT_HARMONY_9           43
+#define EVENT_HARMONY_0           44
+#define EVENT_HARMONY_CLEAR       45
+#define EVENT_HARMONY_ENTER       36
+#define EVENT_HARMONY_MUTE        25
+#define EVENT_HARMONY_ASPECT      61
+#define EVENT_HARMONY_F1          53
+#define EVENT_HARMONY_F3          55
+#define EVENT_HARMONY_F2          54
+#define EVENT_HARMONY_F4          56
+#define EVENT_HARMONY_F5          93
+#define EVENT_HARMONY_F6          94
+#define EVENT_HARMONY_F7          95
+#define EVENT_HARMONY_F8          96
+#define EVENT_HARMONY_F9          73
+#define EVENT_HARMONY_F10         74
+#define EVENT_HARMONY_F11         75
+#define EVENT_HARMONY_F12         76
+#define EVENT_HARMONY_F13         63
+#define EVENT_HARMONY_F14         64
+#define EVENT_HARMONY_CHANUP      71
+#define EVENT_HARMONY_CHANDOWN    72
+#define EVENT_HARMONY_LRGDOWN     82
+#define EVENT_HARMONY_LRGUP       81
+#define EVENT_HARMONY_PWRTOGGLE   66
+#define EVENT_HARMONY_QUEUE       62
+#define EVENT_HARMONY_SLEEP       46
+#define EVENT_HARMONY_RED         83
+#define EVENT_HARMONY_GREEN       84
+#define EVENT_HARMONY_YELLOW      85
+#define EVENT_HARMONY_BLUE        86
+
+bool multi_mode = 0;
+bool debug = 0;
 int idle_mode = LEDMODE_WHITE;
 int button_mode = LEDMODE_OFF;
 int special_mode = LEDMODE_AMBER;
@@ -91,6 +155,7 @@ static CAddress my_addr;
 static int sockfd;
 
 static CPacketBUTTON* button_map[0xff];
+static CPacketBUTTON* multi_map[0xff];
 
 static CPacketNOTIFICATION remote_paired("Remote paired", "You can now only control XBMC using the control you're holding. To unpair, hold down menu and rewind for 6 seconds.", NULL, NULL);
 static CPacketNOTIFICATION remote_unpaired("Remote unpaired", "You can now control XBMC with any Apple remote.", NULL, NULL);
@@ -355,17 +420,6 @@ void dumphex(unsigned char* buf, int size) {
     printf("%02x ", buf[i]);
   }
   printf("\n");
-  
-  /*
-  for(i=0; i < size; i++) {
-    int j = 0;
-    for(j=0; j < 8; j++) {
-      if(buf[i] << j & 0x80) printf("1"); else printf("0");  
-    }
-    printf(" ");
-  }
-  printf("\n"); */
-
 }
 
 unsigned long millis() {
@@ -374,7 +428,22 @@ unsigned long millis() {
   return (time.tv_sec*1000+time.tv_usec/1000);
 }
 
+bool is_multi_candidate(struct ir_command command) {
+  switch(command.address) {
+    case 0x96: case 0x97: case 0x98: case 0x99: case 0x9a: case 0x9b: case 0x9d: case 0x9e: case 0x9f: case 0xa0:
+          if(debug) printf("Multi-remote candidate\n"); return multi_mode; break;
+        default:
+          return false;
+  }
+}
+
+void send_multi(int button) {
+  printf("Sending multi-remote button %02x\n", multi_map[button]->m_ButtonCode);
+  multi_map[button] -> Send(sockfd, my_addr);
+}
+
 void send_button(int button) {
+  printf("Sending button %02x\n", button_map[button]->m_ButtonCode);
   switch(button) {
     case EVENT_UP: printf("Up\n"); break;
     case EVENT_DOWN: printf("Down\n"); break;
@@ -390,62 +459,136 @@ void send_button(int button) {
 }
 
 void handle_button(struct ir_command command) {
-  static unsigned char previousButton;
+  static unsigned short previousButton;
   static unsigned char holdButtonSent;
   static long buttonStart;
 
-  if(previousButton != command.eventId && previousButton != 0 && !holdButtonSent) {
+  unsigned short eventId;
+  if(command.flags == 0x26) {
+    eventId = previousButton;
+  } else {
+    eventId = is_multi_candidate(command) ? command.address<<8 | command.eventId : command.eventId;
+  }
+
+  if(debug) printf("Event id: %04x\n", eventId);
+
+  if(previousButton != eventId && previousButton != 0 && !holdButtonSent) {
     switch(previousButton) {
       case 0x03: case 0x02: send_button(EVENT_MENU); break;
       case 0x05: case 0x04: send_button(EVENT_PLAY); break;
+      case 0x9602: send_multi(EVENT_HARMONY_MENU); break;
+      case 0x9604: send_multi(EVENT_HARMONY_OK); break;
     }
   }
   
-  if(previousButton != command.eventId) {
+  if(previousButton != eventId) {
     buttonStart = millis();
   }
 
-  switch(command.eventId) {
+  switch(eventId) {
     case 0x0a:
     case 0x0b:
-      if(command.eventId != previousButton) send_button(EVENT_UP); break;
+      if(eventId != previousButton) send_button(EVENT_UP); break;
     case 0x0c:
     case 0x0d:
-      if(command.eventId != previousButton) send_button(EVENT_DOWN); break;
+      if(eventId != previousButton) send_button(EVENT_DOWN); break;
     case 0x09:
     case 0x08:
-      if(command.eventId != previousButton) send_button(EVENT_LEFT); break;
+      if(eventId != previousButton) send_button(EVENT_LEFT); break;
     case 0x06:
     case 0x07:
-      if(command.eventId != previousButton) send_button(EVENT_RIGHT); break;
+      if(eventId != previousButton) send_button(EVENT_RIGHT); break;
       
     // extra buttons mapped by Harmony remotes
-    case 0x16: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PLAY         ); break;
-    case 0x32: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAUSE        ); break;
-    case 0x31: if(command.eventId != previousButton) send_button( EVENT_EXTRA_STOP         ); break;
-    case 0x25: if(command.eventId != previousButton) send_button( EVENT_EXTRA_REPLAY       ); break;
-    case 0x23: if(command.eventId != previousButton) send_button( EVENT_EXTRA_SKIP         ); break;
-    case 0x1c: if(command.eventId != previousButton) send_button( EVENT_EXTRA_REWIND       ); break;
-    case 0x1a: if(command.eventId != previousButton) send_button( EVENT_EXTRA_FORWARD      ); break;
-    case 0x2f: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAGEUP       ); break;
-    case 0x26: if(command.eventId != previousButton) send_button( EVENT_EXTRA_PAGEDOWN     ); break;
+    case 0x16: if(eventId != previousButton) send_button( EVENT_EXTRA_PLAY         ); break;
+    case 0x32: if(eventId != previousButton) send_button( EVENT_EXTRA_PAUSE        ); break;
+    case 0x31: if(eventId != previousButton) send_button( EVENT_EXTRA_STOP         ); break;
+    case 0x25: if(eventId != previousButton) send_button( EVENT_EXTRA_REPLAY       ); break;
+    case 0x23: if(eventId != previousButton) send_button( EVENT_EXTRA_SKIP         ); break;
+    case 0x1c: if(eventId != previousButton) send_button( EVENT_EXTRA_REWIND       ); break;
+    case 0x1a: if(eventId != previousButton) send_button( EVENT_EXTRA_FORWARD      ); break;
+    case 0x2f: if(eventId != previousButton) send_button( EVENT_EXTRA_PAGEUP       ); break;
+    case 0x26: if(eventId != previousButton) send_button( EVENT_EXTRA_PAGEDOWN     ); break;
       
-    case 0x03: case 0x02: case 0x05: case 0x04:
+    // multi-remote buttons
+    // extra buttons mapped by Harmony remotes - duplicates of ATV, just in case
+    case 0x960b: if(eventId != previousButton) send_multi( EVENT_HARMONY_UP           ); break;
+    case 0x960d: if(eventId != previousButton) send_multi( EVENT_HARMONY_DOWN         ); break;
+    case 0x9608: if(eventId != previousButton) send_multi( EVENT_HARMONY_LEFT         ); break;
+    case 0x9607: if(eventId != previousButton) send_multi( EVENT_HARMONY_RIGHT        ); break;
+    case 0x9703: if(eventId != previousButton) send_multi( EVENT_HARMONY_PLAY         ); break;
+    case 0x9705: if(eventId != previousButton) send_multi( EVENT_HARMONY_STOP         ); break;
+    case 0x9803: if(eventId != previousButton) send_multi( EVENT_HARMONY_PAUSE        ); break;
+    case 0xa00b: if(eventId != previousButton) send_multi( EVENT_HARMONY_REPLAY       ); break;
+    case 0xa00d: if(eventId != previousButton) send_multi( EVENT_HARMONY_SKIP         ); break;
+    case 0x9a0b: if(eventId != previousButton) send_multi( EVENT_HARMONY_REWIND       ); break;
+    case 0x9a0d: if(eventId != previousButton) send_multi( EVENT_HARMONY_FORWARD      ); break;
+    case 0x9b0c: if(eventId != previousButton) send_multi( EVENT_HARMONY_RECORD       ); break;
+    case 0x990d: if(eventId != previousButton) send_multi( EVENT_HARMONY_PREV         ); break;
+    case 0x9d05: if(eventId != previousButton) send_multi( EVENT_HARMONY_GUIDE        ); break;
+    case 0x990b: if(eventId != previousButton) send_multi( EVENT_HARMONY_INFO         ); break;
+    case 0x9b0a: if(eventId != previousButton) send_multi( EVENT_HARMONY_EXIT         ); break;
+    case 0x980a: if(eventId != previousButton) send_multi( EVENT_HARMONY_VOLUP        ); break;
+    case 0x980c: if(eventId != previousButton) send_multi( EVENT_HARMONY_VOLDOWN      ); break;
+    case 0x970a: if(eventId != previousButton) send_multi( EVENT_HARMONY_1            ); break;
+    case 0x970c: if(eventId != previousButton) send_multi( EVENT_HARMONY_2            ); break;
+    case 0x9709: if(eventId != previousButton) send_multi( EVENT_HARMONY_3            ); break;
+    case 0x9706: if(eventId != previousButton) send_multi( EVENT_HARMONY_4            ); break;
+    case 0x9809: if(eventId != previousButton) send_multi( EVENT_HARMONY_5            ); break;
+    case 0x9806: if(eventId != previousButton) send_multi( EVENT_HARMONY_6            ); break;
+    case 0x9908: if(eventId != previousButton) send_multi( EVENT_HARMONY_7            ); break;
+    case 0x9907: if(eventId != previousButton) send_multi( EVENT_HARMONY_8            ); break;
+    case 0x9a08: if(eventId != previousButton) send_multi( EVENT_HARMONY_9            ); break;
+    case 0x9a07: if(eventId != previousButton) send_multi( EVENT_HARMONY_0            ); break;
+    case 0x9a04: if(eventId != previousButton) send_multi( EVENT_HARMONY_CLEAR        ); break;
+    case 0x9902: if(eventId != previousButton) send_multi( EVENT_HARMONY_ENTER        ); break;
+    case 0x9805: if(eventId != previousButton) send_multi( EVENT_HARMONY_MUTE         ); break;
+    case 0x9d0a: if(eventId != previousButton) send_multi( EVENT_HARMONY_ASPECT       ); break;
+    case 0x9b09: if(eventId != previousButton) send_multi( EVENT_HARMONY_F1           ); break;
+    case 0x9b06: if(eventId != previousButton) send_multi( EVENT_HARMONY_F2           ); break;
+    case 0x9b05: if(eventId != previousButton) send_multi( EVENT_HARMONY_F3           ); break;
+    case 0x9b03: if(eventId != previousButton) send_multi( EVENT_HARMONY_F4           ); break;
+    case 0xa008: if(eventId != previousButton) send_multi( EVENT_HARMONY_F5           ); break;
+    case 0xa007: if(eventId != previousButton) send_multi( EVENT_HARMONY_F6           ); break;
+    case 0xa004: if(eventId != previousButton) send_multi( EVENT_HARMONY_F7           ); break;
+    case 0xa002: if(eventId != previousButton) send_multi( EVENT_HARMONY_F8           ); break;
+    case 0x9e09: if(eventId != previousButton) send_multi( EVENT_HARMONY_F9           ); break;
+    case 0x9e06: if(eventId != previousButton) send_multi( EVENT_HARMONY_F10          ); break;
+    case 0x9e05: if(eventId != previousButton) send_multi( EVENT_HARMONY_F11          ); break;
+    case 0x9e03: if(eventId != previousButton) send_multi( EVENT_HARMONY_F12          ); break;
+    case 0x9d09: if(eventId != previousButton) send_multi( EVENT_HARMONY_F13          ); break;
+    case 0x9d06: if(eventId != previousButton) send_multi( EVENT_HARMONY_F14          ); break;
+    case 0x9e0c: if(eventId != previousButton) send_multi( EVENT_HARMONY_CHANDOWN     ); break;
+    case 0x9e0a: if(eventId != previousButton) send_multi( EVENT_HARMONY_CHANUP       ); break;
+    case 0x9f0d: if(eventId != previousButton) send_multi( EVENT_HARMONY_LRGDOWN      ); break;
+    case 0x9f0b: if(eventId != previousButton) send_multi( EVENT_HARMONY_LRGUP        ); break;
+    case 0x9d03: if(eventId != previousButton) send_multi( EVENT_HARMONY_PWRTOGGLE    ); break;
+    case 0x9d0c: if(eventId != previousButton) send_multi( EVENT_HARMONY_QUEUE        ); break;
+    case 0x9a02: if(eventId != previousButton) send_multi( EVENT_HARMONY_SLEEP        ); break;
+    case 0x9f08: if(eventId != previousButton) send_multi( EVENT_HARMONY_RED          ); break;
+    case 0x9f07: if(eventId != previousButton) send_multi( EVENT_HARMONY_GREEN        ); break;
+    case 0x9f04: if(eventId != previousButton) send_multi( EVENT_HARMONY_YELLOW       ); break;
+    case 0x9f02: if(eventId != previousButton) send_multi( EVENT_HARMONY_BLUE         ); break;
+
+    case 0x03: case 0x02: case 0x05: case 0x04: case 0x9603: case 0x9602: case 0x9605: case 0x9604:
       // menu and pause need special treatment
-      if(previousButton != command.eventId) {
+      if(previousButton != eventId) {
         holdButtonSent = 0;
       } else {
         if(millis() - buttonStart > HOLD_TIMEOUT && !holdButtonSent) {
           set_led(hold_mode);
-          switch(command.eventId) {
+          switch(eventId) {
             case 0x03: case 0x02: send_button(EVENT_HOLD_MENU); break;
             case 0x05: case 0x04: send_button(EVENT_HOLD_PLAY); break;
+            case 0x9602: send_multi(EVENT_HARMONY_HOLD_MENU); break;
+            case 0x9604: send_multi(EVENT_HARMONY_HOLD_OK); break;
           }
           holdButtonSent = 1;
         }
       }
       break;
     case 0x00:
+      // button timeout
       switch(previousButton) {
         case 0x0a:
         case 0x0b:
@@ -458,13 +601,21 @@ void handle_button(struct ir_command command) {
           send_button(EVENT_LEFT | EVENT_RELEASE); break;
         case 0x06:
         case 0x07:
-          send_button(EVENT_RIGHT | EVENT_RELEASE); break; 
+          send_button(EVENT_RIGHT | EVENT_RELEASE); break;
+        case 0x960b: send_multi(EVENT_HARMONY_UP        | EVENT_RELEASE); break;
+        case 0x960d: send_multi(EVENT_HARMONY_DOWN      | EVENT_RELEASE); break;
+        case 0x9608: send_multi(EVENT_HARMONY_LEFT      | EVENT_RELEASE); break;
+        case 0x9607: send_multi(EVENT_HARMONY_RIGHT     | EVENT_RELEASE); break;
+        case 0x980a: send_multi(EVENT_HARMONY_VOLUP     | EVENT_RELEASE); break;
+        case 0x980c: send_multi(EVENT_HARMONY_VOLDOWN   | EVENT_RELEASE); break;
+        case 0x9a0b: send_multi(EVENT_HARMONY_REWIND    | EVENT_RELEASE); break;
+        case 0x9a0d: send_multi(EVENT_HARMONY_FORWARD   | EVENT_RELEASE); break;
       }
-      break; //timeout
+      break;
     default:
-      printf("unknown\n");
+      if(debug) printf("unknown\n");
   }
-  previousButton = command.eventId;
+  previousButton = eventId;
 }
 
 int readPairedAddressId() {
@@ -522,11 +673,13 @@ void usage(int argc, char **argv) {
   if (argc >=1) {
     printf("Usage: %s [-i mode] [-s mode] [-H mode] [-b mode] [-B] [-h]\n", argv[0]);
     printf("  Options:\n");
+    printf("      -m\tEnable multi-remote support.\n");
     printf("      -i\tChange the LED mode for when the receiver is idle.\n");
     printf("      -b\tChange the LED mode for when the receiver is receiving a button press.\n");
     printf("      -H\tChange the LED mode for when the hold event is triggered.\n");
     printf("      -s\tChange the LED mode for when a special event is received.\n");
-    printf("      -B\tSwitch LED to low brightness\n");
+    printf("      -B\tSwitch LED to low brightness.\n");
+    printf("      -d\tEnable debug output,\n");
     printf("      -h\tShow this help screen.\n\n");
     printf("Supported LED modes:\n");
     printf("  0: off\n");
@@ -547,8 +700,10 @@ int main(int argc, char **argv) {
   
   int led_brightness = 1;
  
-  while ((c = getopt (argc, argv, "Bi:b:s:H:h")) != -1)
+  while ((c = getopt (argc, argv, "mBi:b:s:H:hd")) != -1)
   switch (c) {
+    case 'm':
+      multi_mode = 1; break;
     case 'i':
       idle_mode = atol(optarg); break;
     case 'b':
@@ -557,6 +712,8 @@ int main(int argc, char **argv) {
       special_mode = atol(optarg); break;
     case 'H':
       hold_mode = atol(optarg); break;
+    case 'd':
+      debug = 1; break;
     case 'h':
       usage(argc,argv); exit(0); break;
     case 'B':
@@ -583,7 +740,7 @@ int main(int argc, char **argv) {
   
   memset(&timeoutCommand, 0, sizeof(timeoutCommand));
   
-  printf("Creating socket...\n");
+  if(debug) printf("Creating socket...\n");
   
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   if (sockfd < 0)
@@ -592,7 +749,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  printf("Preparing button map...\n");
+  if(debug) printf("Preparing button map...\n");
  
   button_map[EVENT_UP]          = new CPacketBUTTON(EVENT_UP,         "JS0:AppleRemote", BTN_DOWN);
   button_map[EVENT_DOWN]        = new CPacketBUTTON(EVENT_DOWN,       "JS0:AppleRemote", BTN_DOWN);
@@ -602,26 +759,96 @@ int main(int argc, char **argv) {
   button_map[EVENT_MENU]        = new CPacketBUTTON(EVENT_MENU,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_PLAY]   = new CPacketBUTTON(EVENT_HOLD_PLAY,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
   button_map[EVENT_HOLD_MENU]   = new CPacketBUTTON(EVENT_HOLD_MENU,  "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_UP | EVENT_RELEASE    ] = new CPacketBUTTON(EVENT_UP,      "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_DOWN | EVENT_RELEASE  ] = new CPacketBUTTON(EVENT_DOWN,    "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_LEFT | EVENT_RELEASE  ] = new CPacketBUTTON(EVENT_LEFT,    "JS0:AppleRemote", BTN_UP);
-  button_map[EVENT_RIGHT | EVENT_RELEASE ] = new CPacketBUTTON(EVENT_RIGHT,   "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_UP | EVENT_RELEASE    ]              = new CPacketBUTTON(EVENT_UP,      "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_DOWN | EVENT_RELEASE  ]              = new CPacketBUTTON(EVENT_DOWN,    "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_LEFT | EVENT_RELEASE  ]              = new CPacketBUTTON(EVENT_LEFT,    "JS0:AppleRemote", BTN_UP);
+  button_map[EVENT_RIGHT | EVENT_RELEASE ]              = new CPacketBUTTON(EVENT_RIGHT,   "JS0:AppleRemote", BTN_UP);
   
-  button_map[EVENT_EXTRA_PLAY]          = new CPacketBUTTON(EVENT_EXTRA_PLAY,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_PAUSE]         = new CPacketBUTTON(EVENT_EXTRA_PAUSE,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_STOP]          = new CPacketBUTTON(EVENT_EXTRA_STOP,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_REPLAY]        = new CPacketBUTTON(EVENT_EXTRA_REPLAY,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_SKIP]          = new CPacketBUTTON(EVENT_EXTRA_SKIP,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_REWIND]        = new CPacketBUTTON(EVENT_EXTRA_REWIND,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_FORWARD]       = new CPacketBUTTON(EVENT_EXTRA_FORWARD,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_PAGEUP]        = new CPacketBUTTON(EVENT_EXTRA_PAGEUP,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  button_map[EVENT_EXTRA_PAGEDOWN]      = new CPacketBUTTON(EVENT_EXTRA_PAGEDOWN,      "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
-  
+  button_map[EVENT_EXTRA_PLAY]                        = new CPacketBUTTON(EVENT_EXTRA_PLAY,           "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAUSE]                       = new CPacketBUTTON(EVENT_EXTRA_PAUSE,          "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_STOP]                        = new CPacketBUTTON(EVENT_EXTRA_STOP,           "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_REPLAY]                      = new CPacketBUTTON(EVENT_EXTRA_REPLAY,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_SKIP]                        = new CPacketBUTTON(EVENT_EXTRA_SKIP,           "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_REWIND]                      = new CPacketBUTTON(EVENT_EXTRA_REWIND,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_FORWARD]                     = new CPacketBUTTON(EVENT_EXTRA_FORWARD,        "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAGEUP]                      = new CPacketBUTTON(EVENT_EXTRA_PAGEUP,         "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  button_map[EVENT_EXTRA_PAGEDOWN]                    = new CPacketBUTTON(EVENT_EXTRA_PAGEDOWN,       "JS0:AppleRemote", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+
+  multi_map[EVENT_HARMONY_UP]                        = new CPacketBUTTON(EVENT_HARMONY_UP,           "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_UP        | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_UP,           "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_DOWN]                      = new CPacketBUTTON(EVENT_HARMONY_DOWN,         "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_DOWN      | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_DOWN,         "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_LEFT]                      = new CPacketBUTTON(EVENT_HARMONY_LEFT,         "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_LEFT      | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_LEFT,         "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_RIGHT]                     = new CPacketBUTTON(EVENT_HARMONY_RIGHT,        "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_RIGHT     | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_RIGHT,        "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_OK]                        = new CPacketBUTTON(EVENT_HARMONY_OK,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_MENU]                      = new CPacketBUTTON(EVENT_HARMONY_MENU,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_HOLD_OK]                   = new CPacketBUTTON(EVENT_HARMONY_HOLD_OK,      "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_HOLD_MENU]                 = new CPacketBUTTON(EVENT_HARMONY_HOLD_MENU,    "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_PLAY]                      = new CPacketBUTTON(EVENT_HARMONY_PLAY,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_STOP]                      = new CPacketBUTTON(EVENT_HARMONY_STOP,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_PAUSE]                     = new CPacketBUTTON(EVENT_HARMONY_PAUSE,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_REPLAY]                    = new CPacketBUTTON(EVENT_HARMONY_REPLAY,       "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_SKIP]                      = new CPacketBUTTON(EVENT_HARMONY_SKIP,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_REWIND]                    = new CPacketBUTTON(EVENT_HARMONY_REWIND,       "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_REWIND    | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_REWIND,       "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_FORWARD]                   = new CPacketBUTTON(EVENT_HARMONY_FORWARD,      "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_FORWARD   | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_FORWARD,      "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_RECORD]                    = new CPacketBUTTON(EVENT_HARMONY_RECORD,       "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_PREV]                      = new CPacketBUTTON(EVENT_HARMONY_PREV,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_GUIDE]                     = new CPacketBUTTON(EVENT_HARMONY_GUIDE,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_INFO]                      = new CPacketBUTTON(EVENT_HARMONY_INFO,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_EXIT]                      = new CPacketBUTTON(EVENT_HARMONY_EXIT,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_VOLUP]                     = new CPacketBUTTON(EVENT_HARMONY_VOLUP,        "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_VOLUP     | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_VOLUP,        "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_VOLDOWN]                   = new CPacketBUTTON(EVENT_HARMONY_VOLDOWN,      "JS0:Harmony", BTN_DOWN);
+  multi_map[EVENT_HARMONY_VOLDOWN   | EVENT_RELEASE] = new CPacketBUTTON(EVENT_HARMONY_VOLDOWN,      "JS0:Harmony", BTN_UP);
+  multi_map[EVENT_HARMONY_1]                         = new CPacketBUTTON(EVENT_HARMONY_1,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_2]                         = new CPacketBUTTON(EVENT_HARMONY_2,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_3]                         = new CPacketBUTTON(EVENT_HARMONY_3,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_4]                         = new CPacketBUTTON(EVENT_HARMONY_4,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_5]                         = new CPacketBUTTON(EVENT_HARMONY_5,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_6]                         = new CPacketBUTTON(EVENT_HARMONY_6,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_7]                         = new CPacketBUTTON(EVENT_HARMONY_7,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_8]                         = new CPacketBUTTON(EVENT_HARMONY_8,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_9]                         = new CPacketBUTTON(EVENT_HARMONY_9,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_0]                         = new CPacketBUTTON(EVENT_HARMONY_0,            "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_CLEAR]                     = new CPacketBUTTON(EVENT_HARMONY_CLEAR,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_ENTER]                     = new CPacketBUTTON(EVENT_HARMONY_ENTER,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_MUTE]                      = new CPacketBUTTON(EVENT_HARMONY_MUTE,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_ASPECT]                    = new CPacketBUTTON(EVENT_HARMONY_ASPECT,       "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F1]                        = new CPacketBUTTON(EVENT_HARMONY_F1,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F2]                        = new CPacketBUTTON(EVENT_HARMONY_F2,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F3]                        = new CPacketBUTTON(EVENT_HARMONY_F3,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F4]                        = new CPacketBUTTON(EVENT_HARMONY_F4,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F5]                        = new CPacketBUTTON(EVENT_HARMONY_F5,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F6]                        = new CPacketBUTTON(EVENT_HARMONY_F6,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F7]                        = new CPacketBUTTON(EVENT_HARMONY_F7,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F8]                        = new CPacketBUTTON(EVENT_HARMONY_F8,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F9]                        = new CPacketBUTTON(EVENT_HARMONY_F9,           "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F10]                       = new CPacketBUTTON(EVENT_HARMONY_F10,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F11]                       = new CPacketBUTTON(EVENT_HARMONY_F11,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F12]                       = new CPacketBUTTON(EVENT_HARMONY_F12,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F13]                       = new CPacketBUTTON(EVENT_HARMONY_F13,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_F14]                       = new CPacketBUTTON(EVENT_HARMONY_F14,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_CHANUP]                    = new CPacketBUTTON(EVENT_HARMONY_CHANUP,       "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_CHANDOWN]                  = new CPacketBUTTON(EVENT_HARMONY_CHANDOWN,     "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_LRGDOWN]                   = new CPacketBUTTON(EVENT_HARMONY_LRGDOWN,      "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_LRGUP]                     = new CPacketBUTTON(EVENT_HARMONY_LRGUP,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_PWRTOGGLE]                 = new CPacketBUTTON(EVENT_HARMONY_PWRTOGGLE,    "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_QUEUE]                     = new CPacketBUTTON(EVENT_HARMONY_QUEUE,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_SLEEP]                     = new CPacketBUTTON(EVENT_HARMONY_SLEEP,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_RED]                       = new CPacketBUTTON(EVENT_HARMONY_RED,          "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_GREEN]                     = new CPacketBUTTON(EVENT_HARMONY_GREEN,        "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_YELLOW]                    = new CPacketBUTTON(EVENT_HARMONY_YELLOW,       "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+  multi_map[EVENT_HARMONY_BLUE]                      = new CPacketBUTTON(EVENT_HARMONY_BLUE,         "JS0:Harmony", BTN_DOWN | BTN_NO_REPEAT | BTN_QUEUE);
+
   pairedRemoteId = readPairedAddressId();
   
-  printf("Paired to: %x\n", pairedRemoteId);
+  if(debug) printf("Paired to: %x\n", pairedRemoteId);
   
-  printf("Ready!\n");
+  if(debug) printf("Ready!\n");
   
   set_led(LEDMODE_WHITE);
   
@@ -634,13 +861,17 @@ int main(int argc, char **argv) {
     if(result > 0) {
       // we have an IR code!
       unsigned long start = millis();
-      //printf("%10d: ", millis());
-      dumphex((unsigned char*) &command, result);
+      if(debug) dumphex((unsigned char*) &command, result);
       
+      if(command.flags == 0x26) {
+        // set
+        command.event = 0xee;
+      }
+
       switch(command.event) {
         case 0xee:
         case 0xe5: 
-          if(pairedRemoteId == 0 || command.address == pairedRemoteId) {
+          if(pairedRemoteId == 0 || command.address == pairedRemoteId || (is_multi_candidate(command))) {
             set_led(button_mode);
             handle_button(command);
           }
@@ -650,7 +881,7 @@ int main(int argc, char **argv) {
           handle_special(command);
           break;
         default:
-          printf("Unknown event %x\n", command.event);
+          if(debug) printf("Unknown event %x\n", command.event);
       }
       keydown = 1;
       
@@ -663,7 +894,7 @@ int main(int argc, char **argv) {
     } else {
       // something else
       keydown = 0;
-      printf("Got nuffing: %d\n", result);
+      if(debug) printf("Got nuffing: %d\n", result);
     }
   }
   reattach();

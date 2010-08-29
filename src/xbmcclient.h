@@ -467,10 +467,10 @@ class CPacketBUTTON : public CPacket
 private:
   std::vector<char> m_DeviceMap;
   std::vector<char> m_Button;
+public:
   unsigned short m_ButtonCode;
   unsigned short m_Amount;
   unsigned short m_Flags;
-public:
   virtual void ConstructPayload()
   {
     m_Payload.clear();
