@@ -25,7 +25,14 @@
 #include "xbmcclient.h"
 
 #define VENDOR_APPLE		0x05ac
-#define PRODUCT_IR		0x8241
+#define PRODUCT_APPLE_IR_0    0x8240
+#define PRODUCT_APPLE_IR_1    0x8241
+#define PRODUCT_APPLE_IR_2    0x8242
+
+#define IS_APPLE_REMOTE(dev) ((dev->descriptor.idVendor == VENDOR_APPLE) && \
+                             ((dev->descriptor.idProduct == PRODUCT_APPLE_IR_0) || \
+                              (dev->descriptor.idProduct == PRODUCT_APPLE_IR_1) || \
+                              (dev->descriptor.idProduct == PRODUCT_APPLE_IR_2)))
 
 #define LEDMODE_OFF		0
 #define LEDMODE_AMBER		1
@@ -265,8 +272,8 @@ static usb_dev_handle *find_ir(void)
 	for (bus = usb_busses; bus; bus = bus->next) {
 		for (dev = bus->devices; dev; dev = dev->next)
 			if (dev->descriptor.idVendor == VENDOR_APPLE
-			    && dev->descriptor.idProduct == PRODUCT_IR)
-				return usb_open(dev);
+			    if(IS_APPLE_REMOTE(dev))
+ 				return usb_open(dev);
 	}
 
 	return NULL;
