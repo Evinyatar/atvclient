@@ -271,7 +271,7 @@ static usb_dev_handle *find_ir(void)
 
 	for (bus = usb_busses; bus; bus = bus->next) {
 		for (dev = bus->devices; dev; dev = dev->next)
-			if (dev->descriptor.idVendor == VENDOR_APPLE
+			if (dev->descriptor.idVendor == VENDOR_APPLE)
 			    if(IS_APPLE_REMOTE(dev))
  				return usb_open(dev);
 	}
